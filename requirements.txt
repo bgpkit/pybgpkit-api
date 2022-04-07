@@ -1,0 +1,7 @@
+fastapi==0.75.1
+supabase~=0.3.0
+python-dotenv~=0.19.2
+pydantic~=1.9.0
+starlette~=0.17
+uvicorn
+pybgpkit==0.0.3a1
