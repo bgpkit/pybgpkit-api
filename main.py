@@ -2,7 +2,7 @@ import json
 from typing import Optional, List
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
@@ -38,29 +38,60 @@ app.add_middleware(
 )
 
 
+class ListEntry(BaseModel):
+    url: str
+    project: str
+    collector: str
+    data_type: str
+    size: int
+
+
+class ListResult(BaseModel):
+    count: int
+    total_size: int
+    error: Optional[str]
+    files: List[ListEntry]
+
+
 class Entry(BaseModel):
-    tal: str
+    timestamp: float
+    elem_type: str
+    peer_ip: str
+    peer_asn: int
     prefix: str
-    max_len: int
-    asn: int
-    date_ranges: List[List[str]]
+    next_hop: Optional[str]
+    as_path: Optional[str]
+    origin_asns: Optional[List[str]]
+    origin: Optional[str]
+    local_pref: Optional[int]
+    med: Optional[int]
+    communities: Optional[List[str]]
+    atomic: Optional[str]
+    aggr_asn: Optional[Optional[int]]
+    aggr_ip: Optional[Optional[str]]
 
 
-class Result(BaseModel):
+class ParseResult(BaseModel):
     count: int
     error: Optional[str]
-    data: List[Entry]
+    msgs: List[Entry]
 
 
-@app.get("/parse", response_model=Result, response_description="Parsed API", )
-async def parse(request: Request,
-                url: str,
-                prefix: str = "",
-                asn: int = -1,
-                as_path: str = "",
-                limit: int = None,
-                debug: bool = False,
-                ):
+class ProcessResult(BaseModel):
+    count: int
+    error: Optional[str]
+    msgs: List[Entry]
+    files: ListResult
+
+
+@app.get("/parse", response_model=ParseResult, response_description="Parsed API", )
+async def parse_single_file(request: Request,
+                            url: str = Query(..., description="URL to the MRT file to parse"),
+                            prefix: str = Query("", description="filter by prefix"),
+                            asn: int = Query(-1, description="filter by AS number"),
+                            as_path: str = Query("", description="filter by AS path"),
+                            limit: int = Query(None, description="limit the number of messages to return"),
+                            ):
     filters = {}
     if prefix:
         filters["prefix"] = prefix
@@ -70,10 +101,43 @@ async def parse(request: Request,
         filters["as_path"] = as_path
 
     parser = Parser(url=url, filters=filters)
-    elems = parser.parse_all()
-    if limit and limit > 0:
-        elems = elems[:limit]
-    if debug:
-        return Response("{'result': 'done'}", media_type="application/json")
+
+    count = 0
+    elems = []
+    while True:
+        msg = parser.parse_next()
+        if not msg:
+            break
+        count += 1
+        print(count, limit)
+
+        elems.append(msg)
+        if limit and count >= limit:
+            break
 
     return Response(json.dumps({"data": elems}), media_type="application/json")
+
+
+@app.post("/files", response_model=ListResult, response_description="List files", )
+async def search_files(
+        ts_start: str = Query(..., description="start timestamp, in unix time or RFC3339 format"),
+        ts_end: str = Query(..., description="end timestamp, in unix time or RFC3339 format"),
+        project: str = Query(None, description="filter by project name, i.e. route-views or riperis"),
+        collector: str = Query(None, description="filter by collector name, e.g. rrc00 or route-views2")
+):
+    pass
+
+
+@app.post("/search", response_model=ProcessResult, response_description="Parsed API", )
+async def search_messages(
+        ts_start: str = Query(..., description="start timestamp, in unix time or RFC3339 format"),
+        ts_end: str = Query(..., description="end timestamp, in unix time or RFC3339 format"),
+        project: str = Query(None, description="filter by project name, i.e. route-views or riperis"),
+        collector: str = Query(None, description="filter by collector name, e.g. rrc00 or route-views2"),
+
+        origin: str = Query(None, description="filter by origin as"),
+        prefix: str = Query(None, description="filter by prefix"),
+        as_path: str = Query(None, description="filter by AS path regular expression"),
+        msg_type: str = Query(None, description="filter by message type, i.e. announcement or withdrawal"),
+):
+    pass
