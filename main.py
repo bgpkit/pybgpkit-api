@@ -84,18 +84,18 @@ class ProcessResult(BaseModel):
     files: ListResult
 
 
-@app.get("/parse", response_model=ParseResult, response_description="Parsed API", )
+@app.post("/parse", response_model=ParseResult, response_description="Parsed API", )
 async def parse_single_file(request: Request,
                             url: str = Query(..., description="URL to the MRT file to parse"),
-                            prefix: str = Query("", description="filter by prefix"),
-                            asn: int = Query(-1, description="filter by AS number"),
-                            as_path: str = Query("", description="filter by AS path"),
+                            prefix: str = Query(None, description="filter by prefix"),
+                            asn: int = Query(None, description="filter by AS number"),
+                            as_path: str = Query(None, description="filter by AS path"),
                             limit: int = Query(None, description="limit the number of messages to return"),
                             ):
     filters = {}
     if prefix:
         filters["prefix"] = prefix
-    if asn >= 0:
+    if asn and asn >= 0:
         filters["origin_asn"] = str(asn)
     if as_path:
         filters["as_path"] = as_path
@@ -109,7 +109,6 @@ async def parse_single_file(request: Request,
         if not msg:
             break
         count += 1
-        print(count, limit)
 
         elems.append(msg)
         if limit and count >= limit:
