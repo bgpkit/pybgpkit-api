@@ -1,4 +1,6 @@
 import json
+import multiprocessing
+import logging
 from typing import Optional, List
 
 import bgpkit
@@ -6,12 +8,19 @@ from arrow import ParserError
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
 from fastapi.encoders import jsonable_encoder
+from mpire import WorkerPool
 from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
 load_dotenv()
+logging.basicConfig(
+    # filename='HISTORYlistener.log',
+    level=logging.INFO,
+    format='%(asctime)s.%(msecs)03d %(levelname)s %(module)s - %(funcName)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+)
 
 description = """
 
@@ -40,7 +49,7 @@ app.add_middleware(
 )
 
 
-class ListEntry(BaseModel):
+class FileEntry(BaseModel):
     url: str
     project: str
     collector: str
@@ -52,7 +61,7 @@ class ListResult(BaseModel):
     count: int
     total_size: int
     error: Optional[str]
-    files: List[ListEntry]
+    files: List[FileEntry]
 
 
 class Entry(BaseModel):
@@ -94,6 +103,7 @@ def parse_file(
         msg_type: Optional[str] = None,
         limit: Optional[int] = None,
 ):
+    logging.info(f"parsing {url} now...")
     filters = {}
     if prefix:
         filters["prefix"] = prefix
@@ -119,7 +129,7 @@ def parse_file(
         elems.append(msg)
         if limit and count >= limit:
             break
-
+    logging.info(f"parsing {url} now... done")
     return elems
 
 
@@ -129,24 +139,25 @@ async def parse_single_file(request: Request,
                             prefix: str = Query(None, description="filter by prefix"),
                             asn: int = Query(None, description="filter by AS number"),
                             as_path: str = Query(None, description="filter by AS path"),
+                            msg_type: str = Query(None, description="message type, announcement or withdrawal"),
                             limit: int = Query(None, description="limit the number of messages to return"),
                             ):
-    elems = parse_file(url, prefix, asn, as_path, limit, None)
+    elems = parse_file(url, prefix, asn, as_path, msg_type, limit)
     return Response(json.dumps({"data": elems}), media_type="application/json")
 
 
-def convert_broker_item(item):
+def convert_broker_item(item) -> FileEntry:
     if item.collector_id.startswith("rrc"):
         project = "riperis"
     else:
         project = "routeviews"
 
-    if item.exact_size>0:
+    if item.exact_size > 0:
         size = item.exact_size
     else:
         size = item.rough_size
 
-    return ListEntry(
+    return FileEntry(
         url=item.url,
         project=project,
         collector=item.collector_id,
@@ -155,11 +166,12 @@ def convert_broker_item(item):
     )
 
 
-def query_broker(ts_start, ts_end, project, collector):
+def query_files(ts_start, ts_end, project, collector) -> List[FileEntry]:
     broker = bgpkit.Broker()
     items = broker.query(ts_start=ts_start, ts_end=ts_end, project=project,
                          collector_id=collector, data_type="update")
-    return items
+    files = [convert_broker_item(i) for i in items]
+    return files
 
 
 @app.post("/files", response_model=ListResult, response_description="List files", )
@@ -170,11 +182,10 @@ async def search_files(
         collector: str = Query(None, description="filter by collector name, e.g. rrc00 or route-views2")
 ):
     try:
-        items = query_broker(ts_start, ts_end, project, collector)
+        files = query_files(ts_start, ts_end, project, collector)
     except ParserError:
         res = jsonable_encoder(ListResult(count=0, total_size=0, error="invalid timestamp", files=[]))
         return Response(json.dumps(res), media_type="application/json")
-    files = [convert_broker_item(i) for i in items]
     res = ListResult(count=len(files), total_size=sum([f.size for f in files]), error=None, files=files)
     return Response(json.dumps(jsonable_encoder(res)), media_type="application/json")
 
@@ -185,33 +196,35 @@ async def search_messages(
         ts_end: str = Query(..., description="end timestamp, in unix time or RFC3339 format"),
         project: str = Query(None, description="filter by project name, i.e. route-views or riperis"),
         collector: str = Query(None, description="filter by collector name, e.g. rrc00 or route-views2"),
-
         origin: int = Query(None, description="filter by origin as"),
         prefix: str = Query(None, description="filter by prefix"),
         as_path: str = Query(None, description="filter by AS path regular expression"),
         msg_type: str = Query(None, description="filter by message type, i.e. announcement or withdrawal"),
+        msgs_limit: int = Query(100, description="limit the number of BGP messages returned for an API call", gt=0),
+        files_limit: int = Query(10, description="limit the number of that will be used for parsing"),
+        dry_run: bool = Query(False, description="whether to skip parsing"),
 ):
     try:
-        items = query_broker(ts_start, ts_end, project, collector)
+        files = query_files(ts_start, ts_end, project, collector)
     except ParserError:
         res = jsonable_encoder(ProcessResult(count=0, error="invalid timestamp", msgs=[]))
-        # todo: fix data format
         return Response(json.dumps(res), media_type="application/json")
-    files = ListResult(count=len(items), total_size=0, error=None, files=[convert_broker_item(i) for i in items])
 
-    items = items
+    if files_limit > 0:
+        files = files[:files_limit]
+
+    list_res = ListResult(count=len(files), total_size=sum([f.size for f in files]), error=None, files=files)
+    logging.info(f"total of {len(files)} files to parse with total size of {list_res.total_size}")
+
     elems = []
+    if not dry_run:
+        with WorkerPool(n_jobs=multiprocessing.cpu_count()) as pool:
+            params = [(f.url, prefix, origin, as_path, msg_type) for f in files]
+            results = pool.map(parse_file, params)
+            for res in results:
+                elems.extend(res)
+            elems = elems[:msgs_limit]
+        logging.info(f"total msgs count: {len(elems)}")
 
-    # TODO:
-
-    # with WorkerPool(n_jobs=5) as pool:
-    #     results = pool.map(parse_file, item.url, prefix, origin, as_path, msg_type)
-
-    for item in items:
-        print(f"parsing {item.url}...")
-        elems.extend(parse_file(item.url, prefix=prefix, asn=origin, as_path=as_path, msg_type=msg_type))
-        print(f"parsing {item.url}...done")
-
-    res = jsonable_encoder(ProcessResult(count=len(elems), error=None, msgs=elems[:1], files=files))
-
+    res = jsonable_encoder(ProcessResult(count=len(elems), error=None, msgs=elems, files=list_res))
     return Response(json.dumps(res), media_type="application/json")
