@@ -98,6 +98,8 @@ class ProcessResult(BaseModel):
 def parse_file(
         url: str,
         prefix: Optional[str] = None,
+        include_super: bool = False,
+        include_sub: bool = False,
         asn: Optional[int] = None,
         as_path: Optional[str] = None,
         msg_type: Optional[str] = None,
@@ -106,7 +108,15 @@ def parse_file(
     logging.info(f"parsing {url} now...")
     filters = {}
     if prefix:
-        filters["prefix"] = prefix
+        if not include_super and not include_sub:
+            filters["prefix"] = prefix
+        elif include_super and include_sub:
+            filters["prefix_super_sub"] = prefix
+        elif include_super:
+            filters["prefix_super"] = prefix
+        elif include_sub:
+            filters["prefix_sub"] = prefix
+
     if asn and asn >= 0:
         filters["origin_asn"] = str(asn)
     if as_path:
@@ -142,7 +152,7 @@ async def parse_single_file(request: Request,
                             msg_type: str = Query(None, description="message type, announcement or withdrawal"),
                             limit: int = Query(None, description="limit the number of messages to return"),
                             ):
-    elems = parse_file(url, prefix, asn, as_path, msg_type, limit)
+    elems = parse_file(url, prefix, False, False, asn, as_path, msg_type, limit)
     return Response(json.dumps({"data": elems}), media_type="application/json")
 
 
@@ -169,7 +179,7 @@ def convert_broker_item(item) -> FileEntry:
 def query_files(ts_start, ts_end, project, collector) -> List[FileEntry]:
     broker = bgpkit.Broker()
     items = broker.query(ts_start=ts_start, ts_end=ts_end, project=project,
-                         collector_id=collector, data_type="update")
+                         collector_id=collector, data_type="update", print_url=True)
     files = [convert_broker_item(i) for i in items]
     return files
 
@@ -203,6 +213,8 @@ async def search_messages(
         msgs_limit: int = Query(100, description="limit the number of BGP messages returned for an API call", gt=0),
         files_limit: int = Query(10, description="limit the number of that will be used for parsing"),
         dry_run: bool = Query(False, description="whether to skip parsing"),
+        include_super: bool = Query(False, description="include super prefix"),
+        include_sub: bool = Query(False, description="include sub prefix"),
 ):
     try:
         files = query_files(ts_start, ts_end, project, collector)
@@ -219,7 +231,7 @@ async def search_messages(
     elems = []
     if not dry_run:
         with WorkerPool(n_jobs=multiprocessing.cpu_count()) as pool:
-            params = [(f.url, prefix, origin, as_path, msg_type) for f in files]
+            params = [(f.url, prefix, include_super, include_sub, origin, as_path, msg_type) for f in files]
             results = pool.map(parse_file, params)
             for res in results:
                 elems.extend(res)
