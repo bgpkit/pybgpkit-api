@@ -177,7 +177,7 @@ def convert_broker_item(item) -> FileEntry:
 
 
 def query_files(ts_start, ts_end, project, collector) -> List[FileEntry]:
-    broker = bgpkit.Broker()
+    broker = bgpkit.Broker(page_size=10000)
     items = broker.query(ts_start=ts_start, ts_end=ts_end, project=project,
                          collector_id=collector, data_type="update", print_url=True)
     files = [convert_broker_item(i) for i in items]
@@ -208,13 +208,13 @@ async def search_messages(
         collector: str = Query(None, description="filter by collector name, e.g. rrc00 or route-views2"),
         origin: int = Query(None, description="filter by origin as"),
         prefix: str = Query(None, description="filter by prefix"),
+        include_super: bool = Query(False, description="include super prefix"),
+        include_sub: bool = Query(False, description="include sub prefix"),
         as_path: str = Query(None, description="filter by AS path regular expression"),
         msg_type: str = Query(None, description="filter by message type, i.e. announcement or withdrawal"),
         msgs_limit: int = Query(100, description="limit the number of BGP messages returned for an API call", gt=0),
         files_limit: int = Query(10, description="limit the number of that will be used for parsing"),
         dry_run: bool = Query(False, description="whether to skip parsing"),
-        include_super: bool = Query(False, description="include super prefix"),
-        include_sub: bool = Query(False, description="include sub prefix"),
 ):
     try:
         files = query_files(ts_start, ts_end, project, collector)
