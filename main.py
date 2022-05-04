@@ -4,6 +4,7 @@ import logging
 from typing import Optional, List
 
 import bgpkit
+import requests
 from arrow import ParserError
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
@@ -47,7 +48,7 @@ app.add_middleware(
 )
 
 
-class FileEntry(BaseModel):
+class MrtFile(BaseModel):
     url: str
     project: str
     collector: str
@@ -55,14 +56,14 @@ class FileEntry(BaseModel):
     size: int
 
 
-class ListResult(BaseModel):
+class FileSearchResult(BaseModel):
     count: int
     total_size: int
     error: Optional[str]
-    files: List[FileEntry]
+    files: List[MrtFile]
 
 
-class Entry(BaseModel):
+class BgpMessage(BaseModel):
     timestamp: float
     elem_type: str
     peer_ip: str
@@ -83,14 +84,8 @@ class Entry(BaseModel):
 class ParseResult(BaseModel):
     count: int
     error: Optional[str]
-    msgs: List[Entry]
-
-
-class ProcessResult(BaseModel):
-    count: int
-    error: Optional[str]
-    msgs: List[Entry]
-    files: ListResult
+    msgs: List[BgpMessage]
+    files: FileSearchResult
 
 
 def parse_file(
@@ -147,7 +142,18 @@ def parse_file(
     return elems
 
 
-def convert_broker_item(item) -> FileEntry:
+def get_file_size(url: str) -> int:
+    response = requests.head(url)
+    if 'content-length' not in response.headers:
+        return 0
+    try:
+        size = int(response.headers['content-length'])
+        return size
+    except ValueError:
+        return 0
+
+
+def convert_broker_item(item) -> MrtFile:
     if item.collector_id.startswith("rrc"):
         project = "riperis"
     else:
@@ -158,7 +164,7 @@ def convert_broker_item(item) -> FileEntry:
     else:
         size = item.rough_size
 
-    return FileEntry(
+    return MrtFile(
         url=item.url,
         project=project,
         collector=item.collector_id,
@@ -167,7 +173,7 @@ def convert_broker_item(item) -> FileEntry:
     )
 
 
-def query_files(ts_start, ts_end, project, collector) -> List[FileEntry]:
+def query_files(ts_start, ts_end, project, collector) -> List[MrtFile]:
     broker = bgpkit.Broker(page_size=10000)
     items = broker.query(ts_start=ts_start, ts_end=ts_end, project=project,
                          collector_id=collector, data_type="update", print_url=True)
@@ -203,10 +209,21 @@ async def parse_single_file(
         peer_asn=peer_asn,
         limit=limit
     )
-    return Response(json.dumps({"data": elems}), media_type="application/json")
+    if "rrc" in url:
+        project = "riperis"
+        collector = url.split("/")[3]
+    elif "route-views" in url:
+        project = "routeviews"
+        collector = url.split("/")[3]
+    else:
+        project = "unknown"
+        collector = "unknown"
+    list_res = FileSearchResult(count=1, total_size=0, error=None, files=[MrtFile(url=url, project=project, collector=collector, data_type="update", size=get_file_size(url))])
+    res = jsonable_encoder(ParseResult(count=len(elems), error=None, msgs=elems, files=list_res))
+    return Response(json.dumps(res), media_type="application/json")
 
 
-@app.post("/files", response_model=ListResult, response_description="List files", )
+@app.post("/files", response_model=FileSearchResult, response_description="List files", )
 async def search_files(
         ts_start: str = Query(..., description="start timestamp, in unix time or RFC3339 format"),
         ts_end: str = Query(..., description="end timestamp, in unix time or RFC3339 format"),
@@ -219,13 +236,13 @@ async def search_files(
     try:
         files = query_files(ts_start, ts_end, project, collector)
     except ParserError:
-        res = jsonable_encoder(ListResult(count=0, total_size=0, error="invalid timestamp", files=[]))
+        res = jsonable_encoder(FileSearchResult(count=0, total_size=0, error="invalid timestamp", files=[]))
         return Response(json.dumps(res), media_type="application/json")
-    res = ListResult(count=len(files), total_size=sum([f.size for f in files]), error=None, files=files)
+    res = FileSearchResult(count=len(files), total_size=sum([f.size for f in files]), error=None, files=files)
     return Response(json.dumps(jsonable_encoder(res)), media_type="application/json")
 
 
-@app.post("/search", response_model=ProcessResult, response_description="Parsed API", )
+@app.post("/search", response_model=ParseResult, response_description="Parsed API", )
 async def search_messages(
         ts_start: str = Query(..., description="start timestamp, in unix time or RFC3339 format"),
         ts_end: str = Query(..., description="end timestamp, in unix time or RFC3339 format"),
@@ -253,13 +270,13 @@ async def search_messages(
     try:
         files = query_files(ts_start, ts_end, project, collector)
     except ParserError:
-        res = jsonable_encoder(ProcessResult(count=0, error="invalid timestamp", msgs=[]))
+        res = jsonable_encoder(ParseResult(count=0, error="invalid timestamp", msgs=[]))
         return Response(json.dumps(res), media_type="application/json")
 
     if files_limit and files_limit > 0:
         files = files[:files_limit]
 
-    list_res = ListResult(count=len(files), total_size=sum([f.size for f in files]), error=None, files=files)
+    list_res = FileSearchResult(count=len(files), total_size=sum([f.size for f in files]), error=None, files=files)
     logging.info(f"total of {len(files)} files to parse with total size of {list_res.total_size}")
 
     elems = []
@@ -275,5 +292,5 @@ async def search_messages(
                 elems = elems[:msgs_limit]
         logging.info(f"total msgs count: {len(elems)}")
 
-    res = jsonable_encoder(ProcessResult(count=len(elems), error=None, msgs=elems, files=list_res))
+    res = jsonable_encoder(ParseResult(count=len(elems), error=None, msgs=elems, files=list_res))
     return Response(json.dumps(res), media_type="application/json")

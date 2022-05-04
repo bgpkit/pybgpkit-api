@@ -1,3 +1,4 @@
+requests
 mpire
 arrow
 fastapi==0.75.1
