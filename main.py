@@ -11,7 +11,6 @@ from fastapi.encoders import jsonable_encoder
 from mpire import WorkerPool
 from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
-from starlette.requests import Request
 from starlette.responses import Response
 
 load_dotenv()
@@ -103,9 +102,11 @@ def parse_file(
         asn: Optional[int] = None,
         as_path: Optional[str] = None,
         msg_type: Optional[str] = None,
+        peer_ip: Optional[str] = None,
+        peer_asn: Optional[str] = None,
         limit: Optional[int] = None,
 ):
-    logging.info(f"parsing {url} now...")
+    logging.info(f"parsing {url} now... {peer_asn}, {peer_ip}")
     filters = {}
     if prefix:
         if not include_super and not include_sub:
@@ -126,6 +127,10 @@ def parse_file(
             filters["type"] = "withdraw"
         if msg_type.startswith("a"):
             filters["type"] = "announce"
+    if peer_ip:
+        filters["peer_ip"] = peer_ip
+    if peer_asn:
+        filters["peer_asn"] = peer_asn
 
     parser = bgpkit.Parser(url=url, filters=filters)
     count = 0
@@ -144,15 +149,30 @@ def parse_file(
 
 
 @app.post("/parse", response_model=ParseResult, response_description="Parsed API", )
-async def parse_single_file(request: Request,
-                            url: str = Query(..., description="URL to the MRT file to parse"),
-                            prefix: str = Query(None, description="filter by prefix"),
-                            asn: int = Query(None, description="filter by AS number"),
-                            as_path: str = Query(None, description="filter by AS path"),
-                            msg_type: str = Query(None, description="message type, announcement or withdrawal"),
-                            limit: int = Query(None, description="limit the number of messages to return"),
-                            ):
-    elems = parse_file(url, prefix, False, False, asn, as_path, msg_type, limit)
+async def parse_single_file(
+        url: str = Query(..., description="URL to the MRT file to parse"),
+        prefix: str = Query(None, description="filter by prefix"),
+        include_super: bool = Query(False, description="include super prefix"),
+        include_sub: bool = Query(False, description="include sub prefix"),
+        asn: int = Query(None, description="filter by AS number"),
+        as_path: str = Query(None, description="filter by AS path"),
+        peer_ip: str = Query(None, description="filter by collector peer IP address"),
+        peer_asn: str = Query(None, description="filter by collector peer IP ASN"),
+        msg_type: str = Query(None, description="message type, announcement or withdrawal"),
+        limit: int = Query(None, description="limit the number of messages to return"),
+):
+    elems = parse_file(
+        url=url,
+        prefix=prefix,
+        include_sub=include_sub,
+        include_super=include_super,
+        asn=asn,
+        as_path=as_path,
+        msg_type=msg_type,
+        peer_ip=peer_ip,
+        peer_asn=peer_asn,
+        limit=limit
+    )
     return Response(json.dumps({"data": elems}), media_type="application/json")
 
 
@@ -207,13 +227,15 @@ async def search_messages(
         project: str = Query(None, description="filter by project name, i.e. route-views or riperis"),
         collector: str = Query(None, description="filter by collector name, e.g. rrc00 or route-views2"),
         origin: int = Query(None, description="filter by origin as"),
+        peer_ip: str = Query(None, description="filter by collector peer IP address"),
+        peer_asn: str = Query(None, description="filter by collector peer IP ASN"),
         prefix: str = Query(None, description="filter by prefix"),
         include_super: bool = Query(False, description="include super prefix"),
         include_sub: bool = Query(False, description="include sub prefix"),
         as_path: str = Query(None, description="filter by AS path regular expression"),
         msg_type: str = Query(None, description="filter by message type, i.e. announcement or withdrawal"),
-        msgs_limit: int = Query(100, description="limit the number of BGP messages returned for an API call", gt=0),
-        files_limit: int = Query(10, description="limit the number of that will be used for parsing"),
+        msgs_limit: int = Query(100, description="limit the number of BGP messages returned for an API call"),
+        files_limit: int = Query(-1, description="limit the number of that will be used for parsing"),
         dry_run: bool = Query(False, description="whether to skip parsing"),
 ):
     try:
@@ -231,11 +253,14 @@ async def search_messages(
     elems = []
     if not dry_run:
         with WorkerPool(n_jobs=multiprocessing.cpu_count()) as pool:
-            params = [(f.url, prefix, include_super, include_sub, origin, as_path, msg_type) for f in files]
+            params = [(f.url, prefix, include_super, include_sub, origin, as_path, msg_type, peer_ip, peer_asn, None)
+                      for f in files]
             results = pool.map(parse_file, params)
             for res in results:
                 elems.extend(res)
-            elems = elems[:msgs_limit]
+
+            if msgs_limit > 0:
+                elems = elems[:msgs_limit]
         logging.info(f"total msgs count: {len(elems)}")
 
     res = jsonable_encoder(ProcessResult(count=len(elems), error=None, msgs=elems, files=list_res))
