@@ -22,20 +22,19 @@ logging.basicConfig(
 )
 
 description = """
-
-*MRT Data Parsing API*
-
+BGPKIT Parsing API provides BGP MRT data searching and parsing functionalities via RESTful API.
 """
+
 
 app = FastAPI(
     title="MRT Data Parsing API",
     description=description,
     version="0.1.0",
-    contact={
-        "name": "Contact",
-        "url": "https://bgpkit.com",
-        "email": "data@bgpkit.com"
-    },
+    # contact={
+    #     "name": "Contact",
+    #     "url": "https://bgpkit.com",
+    #     "email": "data@bgpkit.com"
+    # },
     docs_url='/docs',
     redoc_url="/redoc",
 )
@@ -148,34 +147,6 @@ def parse_file(
     return elems
 
 
-@app.post("/parse", response_model=ParseResult, response_description="Parsed API", )
-async def parse_single_file(
-        url: str = Query(..., description="URL to the MRT file to parse"),
-        prefix: str = Query(None, description="filter by prefix"),
-        include_super: bool = Query(False, description="include super prefix"),
-        include_sub: bool = Query(False, description="include sub prefix"),
-        asn: int = Query(None, description="filter by AS number"),
-        as_path: str = Query(None, description="filter by AS path"),
-        peer_ip: str = Query(None, description="filter by collector peer IP address"),
-        peer_asn: str = Query(None, description="filter by collector peer IP ASN"),
-        msg_type: str = Query(None, description="message type, announcement or withdrawal"),
-        limit: int = Query(None, description="limit the number of messages to return"),
-):
-    elems = parse_file(
-        url=url,
-        prefix=prefix,
-        include_sub=include_sub,
-        include_super=include_super,
-        asn=asn,
-        as_path=as_path,
-        msg_type=msg_type,
-        peer_ip=peer_ip,
-        peer_asn=peer_asn,
-        limit=limit
-    )
-    return Response(json.dumps({"data": elems}), media_type="application/json")
-
-
 def convert_broker_item(item) -> FileEntry:
     if item.collector_id.startswith("rrc"):
         project = "riperis"
@@ -204,6 +175,37 @@ def query_files(ts_start, ts_end, project, collector) -> List[FileEntry]:
     return files
 
 
+@app.post("/parse", response_model=ParseResult, response_description="Parsed API", )
+async def parse_single_file(
+        url: str = Query(..., description="URL to the MRT file to parse"),
+        prefix: str = Query(None, description="filter by prefix"),
+        include_super: bool = Query(False, description="whether to include super prefix"),
+        include_sub: bool = Query(False, description="whether to include sub prefix"),
+        asn: int = Query(None, description="filter by AS number"),
+        as_path: str = Query(None, description="filter by AS path"),
+        peer_ip: str = Query(None, description="filter by collector peer IP address"),
+        peer_asn: str = Query(None, description="filter by collector peer IP ASN"),
+        msg_type: str = Query(None, description="message type, announcement or withdrawal"),
+        limit: int = Query(None, description="limit the number of messages to return"),
+):
+    """
+    The `/parse` endpoint provides parsing functionality for one single MRT file.
+    """
+    elems = parse_file(
+        url=url,
+        prefix=prefix,
+        include_sub=include_sub,
+        include_super=include_super,
+        asn=asn,
+        as_path=as_path,
+        msg_type=msg_type,
+        peer_ip=peer_ip,
+        peer_asn=peer_asn,
+        limit=limit
+    )
+    return Response(json.dumps({"data": elems}), media_type="application/json")
+
+
 @app.post("/files", response_model=ListResult, response_description="List files", )
 async def search_files(
         ts_start: str = Query(..., description="start timestamp, in unix time or RFC3339 format"),
@@ -211,6 +213,9 @@ async def search_files(
         project: str = Query(None, description="filter by project name, i.e. route-views or riperis"),
         collector: str = Query(None, description="filter by collector name, e.g. rrc00 or route-views2")
 ):
+    """
+    The `/files` endpoint provides searching for MRT files from RIPE RIS and RouteViews collectors.
+    """
     try:
         files = query_files(ts_start, ts_end, project, collector)
     except ParserError:
@@ -235,16 +240,23 @@ async def search_messages(
         as_path: str = Query(None, description="filter by AS path regular expression"),
         msg_type: str = Query(None, description="filter by message type, i.e. announcement or withdrawal"),
         msgs_limit: int = Query(100, description="limit the number of BGP messages returned for an API call"),
-        files_limit: int = Query(-1, description="limit the number of that will be used for parsing"),
+        files_limit: int = Query(None, description="limit the number of that will be used for parsing"),
         dry_run: bool = Query(False, description="whether to skip parsing"),
 ):
+    """
+    The `/search` provides the combination of searching for MRT data files as well as parallel parsing of the data files
+    and filtering based on provided parameters. The parsing phase spins up at most N independent processes where N is
+    the number of the logical CPU cores, and each process handles the parsing of one single MRT file. At the end of
+    the process, all parsed and filtered messages will be combined back together and returned as a single of list BGP
+    messages in JSON format.
+    """
     try:
         files = query_files(ts_start, ts_end, project, collector)
     except ParserError:
         res = jsonable_encoder(ProcessResult(count=0, error="invalid timestamp", msgs=[]))
         return Response(json.dumps(res), media_type="application/json")
 
-    if files_limit > 0:
+    if files_limit and files_limit > 0:
         files = files[:files_limit]
 
     list_res = ListResult(count=len(files), total_size=sum([f.size for f in files]), error=None, files=files)

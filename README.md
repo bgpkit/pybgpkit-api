@@ -17,7 +17,7 @@ Start the API by:
 python -m uvicorn main:app
 ```
 
-The API documentation will be available at `localhost:8000/docs` (swagger) or `localhost:8000/redoc` (redoc).
+The API documentation will be available at <localhost:8000/docs> (swagger) or <localhost:8000/redoc> (redoc).
 
 ## Sponsor
 
