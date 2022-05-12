@@ -1,3 +1,4 @@
+import datetime
 import json
 import multiprocessing
 import logging
@@ -65,6 +66,7 @@ class FileSearchResult(BaseModel):
 
 class BgpMessage(BaseModel):
     timestamp: float
+    timestamp_str: str
     elem_type: str
     peer_ip: str
     peer_asn: int
@@ -134,7 +136,7 @@ def parse_file(
         if not msg:
             break
         count += 1
-
+        msg["timestamp_str"] = datetime.datetime.fromtimestamp(int(msg["timestamp"]), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         elems.append(msg)
         if limit and count >= limit:
             break
