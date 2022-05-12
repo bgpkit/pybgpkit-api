@@ -230,7 +230,7 @@ async def search_files(
         ts_start: str = Query(..., description="start timestamp, in unix time or RFC3339 format"),
         ts_end: str = Query(..., description="end timestamp, in unix time or RFC3339 format"),
         project: str = Query(None, description="filter by project name, i.e. route-views or riperis"),
-        collector: str = Query(None, description="filter by collector name, e.g. rrc00 or route-views2")
+        collector: str = Query(None, description="filter by collector name, e.g. rrc00 or route-views2. use comma to separate multiple collectors."),
 ):
     """
     The `/files` endpoint provides searching for MRT files from RIPE RIS and RouteViews collectors.
@@ -249,7 +249,7 @@ async def search_messages(
         ts_start: str = Query(..., description="start timestamp, in unix time or RFC3339 format"),
         ts_end: str = Query(..., description="end timestamp, in unix time or RFC3339 format"),
         project: str = Query(None, description="filter by project name, i.e. route-views or riperis"),
-        collector: str = Query(None, description="filter by collector name, e.g. rrc00 or route-views2"),
+        collector: str = Query(None, description="filter by collector name, e.g. rrc00 or route-views2. use comma to separate multiple collectors."),
         origin: int = Query(None, description="filter by origin as"),
         peer_ip: str = Query(None, description="filter by collector peer IP address"),
         peer_asn: str = Query(None, description="filter by collector peer IP ASN"),
