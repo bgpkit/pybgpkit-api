@@ -183,7 +183,7 @@ def query_files(ts_start, ts_end, project, collector) -> List[MrtFile]:
     return files
 
 
-@app.post("/parse", response_model=ParseResult, response_description="Parsed API", )
+@app.get("/parse", response_model=ParseResult, response_description="Parsed API", )
 async def parse_single_file(
         url: str = Query(..., description="URL to the MRT file to parse"),
         prefix: str = Query(None, description="filter by prefix"),
@@ -225,7 +225,7 @@ async def parse_single_file(
     return Response(json.dumps(res), media_type="application/json")
 
 
-@app.post("/files", response_model=FileSearchResult, response_description="List files", )
+@app.get("/files", response_model=FileSearchResult, response_description="List files", )
 async def search_files(
         ts_start: str = Query(..., description="start timestamp, in unix time or RFC3339 format"),
         ts_end: str = Query(..., description="end timestamp, in unix time or RFC3339 format"),
@@ -244,7 +244,7 @@ async def search_files(
     return Response(json.dumps(jsonable_encoder(res)), media_type="application/json")
 
 
-@app.post("/search", response_model=ParseResult, response_description="Parsed API", )
+@app.get("/search", response_model=ParseResult, response_description="Parsed API", )
 async def search_messages(
         ts_start: str = Query(..., description="start timestamp, in unix time or RFC3339 format"),
         ts_end: str = Query(..., description="end timestamp, in unix time or RFC3339 format"),
