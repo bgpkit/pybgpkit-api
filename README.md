@@ -3,8 +3,6 @@
 PyBGPKIT API is an API backend that provides RESTful API access to BGPKIT software and 
 data offerings using PyBGPKIT.
 
-**This is work is currently at a pre-alpha stage, use at your own discretion.**
-
 ## Usage
 
 Install the dependencies first:
@@ -16,6 +14,8 @@ Start the API by:
 ```bash
 python -m uvicorn main:app
 ```
+
+## Documentation
 
 The API documentation will be available at <localhost:8000/docs> (swagger) or <localhost:8000/redoc> (redoc).
 
