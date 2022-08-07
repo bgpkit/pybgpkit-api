@@ -73,7 +73,7 @@ class BgpMessage(BaseModel):
     prefix: str
     next_hop: Optional[str]
     as_path: Optional[str]
-    origin_asns: Optional[List[str]]
+    origin_asns: Optional[List[int]]
     origin: Optional[str]
     local_pref: Optional[int]
     med: Optional[int]
